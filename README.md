@@ -73,14 +73,3 @@ The script handles common errors such as connection issues with the camera and s
 - The script uses the `msvcrt` module for detecting keyboard input, which is specific to Windows. Modify this part if running on a different operating system.
 - Adjust the sleep time in the main loop (`time.sleep(0.02)`) if necessary to match the audio capture rate and transmission timing.
 
-## License
-This project is licensed under the MIT License. See the LICENSE file for more details.
-
-## Acknowledgments
-- `onvif-zeep` library for handling ONVIF protocol.
-- `pyaudio` for audio capture.
-- `requests` for HTTP communication.
-
----
-
-This README provides a comprehensive overview of the project, guiding users through setup, configuration, and usage. Adjust the configuration section and error handling as needed based on your specific setup and requirements.
