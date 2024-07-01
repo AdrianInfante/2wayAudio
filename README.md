@@ -5,7 +5,7 @@ This project allows you to stream audio from your microphone to an ONVIF-compati
 ## Features
 - Connects to an ONVIF camera and configures it for audio streaming.
 - Captures audio from the microphone.
-- Encodes audio data to G.711 format.
+- Encodes audio data to G.711 format.(Disabled)
 - Sends audio data over RTP to the camera.
 - Allows toggling audio output on the camera via HTTP requests.
 
@@ -40,9 +40,8 @@ Update the following configuration variables in the script as per your setup:
 3. The script will:
    - Connect to the camera and configure it for audio streaming.
    - Capture audio from the microphone.
-   - Encode the audio to G.711 format.
+   - Encode the audio to G.711 format. (Disabled)
    - Send the encoded audio data to the camera via RTP.
-4. Press 'Q' on the keyboard to stop streaming and turn off audio output on the camera.
 
 ## Functions Overview
 ### `random_string(length=16)`
@@ -52,7 +51,7 @@ Generates a random string of specified length.
 Performs an HTTP request to the camera to enable or disable audio output.
 
 ### `is_key_pressed()`
-Checks if the 'Q' key is pressed.
+Checks if the 'Q' key is pressed. (Disabled)
 
 ### `create_rtp_packet(payload, seq_num, timestamp, ssrc)`
 Creates an RTP packet with the given payload, sequence number, timestamp, and SSRC.
@@ -61,7 +60,7 @@ Creates an RTP packet with the given payload, sequence number, timestamp, and SS
 Sends the audio data to the camera using RTP.
 
 ### `pcm_to_g711(pcm_data)`
-Converts PCM audio data to G.711 format.
+Converts PCM audio data to G.711 format. (Disabled)
 
 ### `linear2ulaw(pcm_val)`
 Converts a linear PCM value to u-law.
