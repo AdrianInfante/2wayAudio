@@ -1,3 +1,6 @@
+import tkinter as tk
+from threading import Thread
+from tkinter import PhotoImage
 import requests
 from requests.auth import HTTPDigestAuth
 import time
@@ -7,18 +10,21 @@ from onvif import ONVIFCamera
 from onvif.exceptions import ONVIFError
 import pyaudio
 import socket
-import numpy as np
 import struct
-import msvcrt
+import queue
 
-host = '10.253.1.141'
+# Constants
+host = '10.253.0.149'
 port = 80
 username = 'ADMIN'
 password = '1234'
+client_ip = '10.253.0.95'  # Replace with your PC's IP address
+
 
 def random_string(length=16):
     letters = string.ascii_lowercase + string.digits
     return ''.join(random.choice(letters) for i in range(length))
+
 
 def perform_request(audio_out, enable):
     timestamp = int(time.time() * 1000)
@@ -36,7 +42,7 @@ def perform_request(audio_out, enable):
         'X-Requested-With': 'XMLHttpRequest',
         'Connection': 'Keep-Alive',
         'Referer': f'http://{host}/www/index.html',
-        'Host': host
+        'Host': host,
     }
     session_id = random_string(36)
     cookies = {
@@ -53,55 +59,13 @@ def perform_request(audio_out, enable):
     print(f"Response Body: {response.text}")
 
 
-def is_key_pressed():
-    return msvcrt.kbhit() and msvcrt.getch() == b'q'
-
-# Connect to the camera
-try:
-    camera = ONVIFCamera(host, port, username, password)
-    media_service = camera.create_media_service()
-    profiles = media_service.GetProfiles()
-    profile = profiles[0]
-except ONVIFError as e:
-    print(f"Error connecting to camera: {e}")
-    raise
-
-# Ensure the profile supports audio
-if not profile.AudioEncoderConfiguration:
-    raise ONVIFError('Profile does not support audio encoder configuration')
-
-perform_request('on', 'on')
-
-# Get the audio encoder configuration
-audio_encoder_config = media_service.GetAudioEncoderConfiguration(
-    {'ConfigurationToken': profile.AudioEncoderConfiguration.token})
-
-print(f"Audio Encoder Configuration: {audio_encoder_config}")
-
-# Prepare RTP streaming
-rtp_port = 59191  # Destination port
-source_port =  random.randint(50446,65535) 
-client_ip = '10.253.0.95'  
-
-print(f"Client IP: {client_ip}")
-
-try:
-    rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    rtp_socket.bind((client_ip, source_port))
-    print(f"Socket bound to {client_ip}:{source_port}")
-except socket.gaierror as e:
-    print(f"Error binding socket: {e}")
-    raise
-
-
 def create_rtp_packet(payload, seq_num, timestamp, ssrc):
-    # RTP header fields
     version = 2
     padding = 0
     extension = 0
     csrc_count = 0
     marker = 0
-    payload_type = 0  # Typically, G.711 uses payload type 0 (PCMU) or 8 (PCMA)
+    payload_type = 10  # 10 is for L16, which is linear PCM
     
     rtp_header = struct.pack('!BBHII', 
         (version << 6) | (padding << 5) | (extension << 4) | csrc_count,
@@ -112,93 +76,130 @@ def create_rtp_packet(payload, seq_num, timestamp, ssrc):
     )
     return rtp_header + payload
 
-# Initialize variables
-seq_num = 0
-timestamp = 0
-ssrc = random.randint(0, 2**32 - 1)
+import threading
 
-def send_audio_data(audio_data):
-    global seq_num, timestamp
+def audio_streaming():
+    global streaming
+    try:
+        # Connect to the camera
+        camera = ONVIFCamera(host, port, username, password)
+        media_service = camera.create_media_service()
+        profiles = media_service.GetProfiles()
+        profile = profiles[0]
+        
+        # Ensure the profile supports audio
+        if not profile.AudioEncoderConfiguration:
+            raise ONVIFError('Profile does not support audio encoder configuration')
+        
+        perform_request('on', 'on')
+        
+        # Get the audio encoder configuration
+        audio_encoder_config = media_service.GetAudioEncoderConfiguration(
+            {'ConfigurationToken': profile.AudioEncoderConfiguration.token})
+        
+        print(f"Audio Encoder Configuration: {audio_encoder_config}")
+        
+       
+        rtp_port = 59191  # Destination port
+        source_port = random.randint(50446, 65535)  # Source port
+        
+        print(f"Client IP: {client_ip}")
+        
+        try:
+            rtp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            rtp_socket.bind((client_ip, source_port))
+            print(f"Socket bound to {client_ip}:{source_port}")
+        except socket.gaierror as e:
+            print(f"Error binding socket: {e}")
+            raise
+        
+       
+        p = pyaudio.PyAudio()
+        
+        # Buffer size of 2048 frames (2048 * 2 bytes per frame for paInt16 = 4096 bytes)
+        buffer_size = 1024
+        format_audio = pyaudio.paInt16
+        channel = 1
+        f_rate = 8000
+        
+        stream = p.open(format= format_audio, channels=channel, rate=f_rate, input=True, frames_per_buffer=buffer_size)
+        
+        seq_num = 0
+        timestamp = 0
+        ssrc = random.randint(0, 0xFFFFFFFF)
+        
+        # Initialize jitter buffer
+        jitter_buffer = queue.Queue(maxsize=300)  # temporary storage buffer used to capture incoming data packets
+        
+        print("Streaming audio...")
+        
+        while streaming:
+            try:
+                data = stream.read(buffer_size, exception_on_overflow=False)
+                rtp_packet = create_rtp_packet(data, seq_num, timestamp, ssrc)
+                try:
+                    jitter_buffer.put_nowait(rtp_packet)
+                except queue.Full:
+                    jitter_buffer.get() 
+                    jitter_buffer.put_nowait(rtp_packet)
+                seq_num +=1
+                timestamp += buffer_size
+                time.sleep(buffer_size / 8000)  # Ensure consistent packet intervals
+            except IOError as e:
+                print(f"IOError during audio read: {e}")
+            
+            # Send packets from the jitter buffer
+            if not jitter_buffer.empty():
+                rtp_socket.sendto(jitter_buffer.get(), (host, rtp_port))
+        
+    except Exception as e:
+        print(f"Error during streaming: {e}")
+    finally:
+        perform_request('off', 'off')
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        rtp_socket.close()
+        print("Audio streaming stopped.")
 
-    # Ensure exactly 2036 bytes
-    if len(audio_data) > 2036:
-        audio_data = audio_data[:2036]  # Truncate to 2036 bytes
-    elif len(audio_data) < 2036:
-        audio_data += b'\x00' * (2036 - len(audio_data))  # Pad to 2036 bytes
 
-    rtp_packet = create_rtp_packet(audio_data, seq_num, timestamp, ssrc)
-    rtp_socket.sendto(rtp_packet, (host, rtp_port))
-    seq_num += 1
-    timestamp += 160  # 160 samples for 20ms at 8kHz
-    print(f"Sending RTP packet to {host}:{rtp_port}, Size: {len(rtp_packet)} bytes")
-
-
-# Set up PyAudio to capture audio from the microphone
-p = pyaudio.PyAudio()
-
-# Configuration for the audio stream
-stream = p.open(format=pyaudio.paInt16, channels=1, rate=8000, input=True, frames_per_buffer=1024)
-
-def pcm_to_g711(pcm_data):
-    pcm_samples = np.frombuffer(pcm_data, dtype=np.int16)
-    g711_data = np.zeros(2036, dtype=np.uint8)  # Fixed size for G.711 encoded data
-
-    for i in range(min(len(pcm_samples), 1024)):  # Limit to 1024 samples (2036 bytes)
-        pcm_val = pcm_samples[i]
-        ulaw_byte = linear2ulaw(pcm_val)
-        g711_data[i * 2] = ulaw_byte & 0xFF
-        g711_data[i * 2 + 1] = (ulaw_byte >> 8) & 0xFF
-
-    return g711_data.tobytes()
-
-
-def linear2ulaw(pcm_val):
-    pcm_val = max(min(pcm_val, 32767), -32768)
-    BIAS = 0x84
-    CLIP = 32635
-    if pcm_val < 0:
-        pcm_val = BIAS - pcm_val
-        mask = 0x7F
+def start_stop_streaming():
+    global streaming
+    if not streaming:
+        streaming = True
+        start_stop_button.config(image=pressed_image)
+        threading.Thread(target=audio_streaming).start()
     else:
-        pcm_val += BIAS
-        mask = 0xFF
-    if pcm_val > CLIP:
-        pcm_val = CLIP
-    pcm_val += (0x84 >> 2)
-    exponent = 7
-    segment = 0x4000
-    for exp in range(7, -1, -1):
-        if pcm_val >= segment:
-            exponent = exp
-            break
-        segment >>= 1
-    mantissa = (pcm_val >> (exponent + 3)) & 0x0F
-    ulaw_byte = ~(mask & ((exponent << 4) | mantissa))
-    return ulaw_byte
+        streaming = False
+        start_stop_button.config(image=normal_image)
 
-try:
-    while True:
-        audio_data = stream.read(320)  # Read enough audio data to cover the G.711 encoding
-        g711_audio_data = pcm_to_g711(audio_data)
 
-        # Ensure exactly 2036 bytes
-        if len(g711_audio_data) > 2048:
-            g711_audio_data = g711_audio_data[:2048]  # Truncate to 2036 bytes
-        elif len(g711_audio_data) < 2048:
-            g711_audio_data += b'\x00' * (2048 - len(g711_audio_data))  # Pad to 2036 bytes
+streaming = False
 
-        print(f"G.711 Encoded Data: {len(g711_audio_data)} bytes")
-        send_audio_data(g711_audio_data)
-        time.sleep(0.02)  # Adjust sleep time if necessary
-        
-        # Check for 'Q' key press to perform request to turn off audio output
-        if is_key_pressed():
-            perform_request('off', 'off')
-            break
-        
-except KeyboardInterrupt:
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-    rtp_socket.close()
-    print("Streaming stopped.")
+# Create the GUI application
+app = tk.Tk()
+app.title("Audio Streaming Controller")
+
+
+normal_image = PhotoImage(file="normal.png") 
+pressed_image = PhotoImage(file="pressed.png")  
+
+
+start_stop_button = tk.Button(app, image=normal_image, compound=tk.LEFT, command=start_stop_streaming)
+start_stop_button.pack(pady=20)
+
+def center_window(window):
+    window.update_idletasks()
+    width = window.winfo_width()
+    height = window.winfo_height()
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+    x = (screen_width - width) // 2
+    y = (screen_height - height) // 2
+    window.geometry(f'{width}x{height}+{x}+{y}')
+
+
+center_window(app)
+
+
+app.mainloop()
