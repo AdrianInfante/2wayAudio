@@ -41,25 +41,6 @@ Update the following configuration variables in the script as per your setup:
    - Capture audio from the microphone.
    - Send the encoded audio data to the camera via RTP.
 
-## Functions Overview
-### `random_string(length=16)`
-Generates a random string of specified length.
-
-### `perform_request(audio_out, enable)`
-Performs an HTTP request to the camera to enable or disable audio output.
-
-### `create_rtp_packet(payload, seq_num, timestamp, ssrc)`
-Creates an RTP packet with the given payload, sequence number, timestamp, and SSRC.
-
-### `send_audio_data(audio_data)`
-Sends the audio data to the camera using RTP.
-
-
-### `linear2ulaw(pcm_val)`
-Converts a linear PCM value to u-law.
-
-## Error Handling
-The script handles common errors such as connection issues with the camera and socket binding errors. Ensure the camera's credentials and IP address are correct, and that the specified ports are open and available.
 
 ## Notes
 - The script uses the `msvcrt` module for detecting keyboard input, which is specific to Windows. Modify this part if running on a different operating system.
