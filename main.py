@@ -14,10 +14,10 @@ import struct
 import queue
 
 # Constants
-host = '10.253.0.149'
+host = '77.164.63.63'
 port = 80
 username = 'ADMIN'
-password = '1234'
+password = 'Vicon135!'
 client_ip = '10.253.0.95'  # Replace with your PC's IP address
 
 
@@ -80,6 +80,9 @@ import threading
 
 def audio_streaming():
     global streaming
+    stream = None  # Initialize stream to None
+    rtp_socket = None  # Initialize RTP socket to None
+    p = None  # Initialize PyAudio instance to None
     try:
         # Connect to the camera
         camera = ONVIFCamera(host, port, username, password)
@@ -91,15 +94,12 @@ def audio_streaming():
         if not profile.AudioEncoderConfiguration:
             raise ONVIFError('Profile does not support audio encoder configuration')
         
-        perform_request('on', 'on')
-        
         # Get the audio encoder configuration
         audio_encoder_config = media_service.GetAudioEncoderConfiguration(
             {'ConfigurationToken': profile.AudioEncoderConfiguration.token})
         
         print(f"Audio Encoder Configuration: {audio_encoder_config}")
         
-       
         rtp_port = 59191  # Destination port
         source_port = random.randint(50446, 65535)  # Source port
         
@@ -113,23 +113,20 @@ def audio_streaming():
             print(f"Error binding socket: {e}")
             raise
         
-       
         p = pyaudio.PyAudio()
         
-        # Buffer size of 2048 frames (2048 * 2 bytes per frame for paInt16 = 4096 bytes)
         buffer_size = 1024
         format_audio = pyaudio.paInt16
         channel = 1
         f_rate = 8000
         
-        stream = p.open(format= format_audio, channels=channel, rate=f_rate, input=True, frames_per_buffer=buffer_size)
+        stream = p.open(format=format_audio, channels=channel, rate=f_rate, input=True, frames_per_buffer=buffer_size)
         
         seq_num = 0
         timestamp = 0
         ssrc = random.randint(0, 0xFFFFFFFF)
         
-        # Initialize jitter buffer
-        jitter_buffer = queue.Queue(maxsize=300)  # temporary storage buffer used to capture incoming data packets
+        jitter_buffer = queue.Queue(maxsize=300)
         
         print("Streaming audio...")
         
@@ -140,28 +137,28 @@ def audio_streaming():
                 try:
                     jitter_buffer.put_nowait(rtp_packet)
                 except queue.Full:
-                    jitter_buffer.get() 
+                    jitter_buffer.get()
                     jitter_buffer.put_nowait(rtp_packet)
-                seq_num +=1
+                seq_num += 1
                 timestamp += buffer_size
-                time.sleep(buffer_size / 8000)  # Ensure consistent packet intervals
+                time.sleep(buffer_size / 8000)
             except IOError as e:
                 print(f"IOError during audio read: {e}")
             
-            # Send packets from the jitter buffer
             if not jitter_buffer.empty():
                 rtp_socket.sendto(jitter_buffer.get(), (host, rtp_port))
         
     except Exception as e:
         print(f"Error during streaming: {e}")
     finally:
-        perform_request('off', 'off')
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-        rtp_socket.close()
+        if stream:
+            stream.stop_stream()
+            stream.close()
+        if rtp_socket:
+            rtp_socket.close()
+        if p:
+            p.terminate()
         print("Audio streaming stopped.")
-
 
 def start_stop_streaming():
     global streaming
